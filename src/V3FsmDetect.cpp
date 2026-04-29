@@ -347,50 +347,6 @@ class FsmDetectVisitor final : public VNVisitor {
                + firstCand.warnNodep->warnContextSecondary();
     }
 
-    static bool sameCaseCandidateList(
-        const std::vector<std::pair<AstCase*, AstNodeExpr*>>& lhsp,
-        const std::vector<std::pair<AstCase*, AstNodeExpr*>>& rhsp) {
-        if (lhsp.size() != rhsp.size()) return false;
-        for (size_t i = 0; i < lhsp.size(); ++i) {
-            if (lhsp[i].first != rhsp[i].first) return false;
-            if (lhsp[i].second != rhsp[i].second) return false;
-        }
-        return true;
-    }
-
-    static bool sameSenDesc(const FsmSenDesc& lhsp, const FsmSenDesc& rhsp) {
-        return lhsp.edgeType == rhsp.edgeType && lhsp.varScopep == rhsp.varScopep;
-    }
-
-    static bool sameResetCondDesc(const FsmResetCondDesc& lhsp, const FsmResetCondDesc& rhsp) {
-        return lhsp.varScopep == rhsp.varScopep;
-    }
-
-    static bool sameResetArcDesc(const FsmResetArcDesc& lhsp, const FsmResetArcDesc& rhsp) {
-        return lhsp.toValue() == rhsp.toValue() && lhsp.nodep() == rhsp.nodep();
-    }
-
-    static bool sameRegisterCandidate(const FsmRegisterCandidate& lhsp,
-                                      const FsmRegisterCandidate& rhsp) {
-        if (lhsp.scopep() != rhsp.scopep()) return false;
-        if (lhsp.alwaysp() != rhsp.alwaysp()) return false;
-        if (lhsp.stateVscp() != rhsp.stateVscp()) return false;
-        if (lhsp.nextVscp() != rhsp.nextVscp()) return false;
-        if (!sameResetCondDesc(lhsp.resetCond(), rhsp.resetCond())) return false;
-        if (lhsp.hasResetCond() != rhsp.hasResetCond()) return false;
-        if (lhsp.resetInclude() != rhsp.resetInclude()) return false;
-        if (lhsp.inclCond() != rhsp.inclCond()) return false;
-        if (lhsp.senses().size() != rhsp.senses().size()) return false;
-        for (size_t i = 0; i < lhsp.senses().size(); ++i) {
-            if (!sameSenDesc(lhsp.senses()[i], rhsp.senses()[i])) return false;
-        }
-        if (lhsp.resetArcs().size() != rhsp.resetArcs().size()) return false;
-        for (size_t i = 0; i < lhsp.resetArcs().size(); ++i) {
-            if (!sameResetArcDesc(lhsp.resetArcs()[i], rhsp.resetArcs()[i])) return false;
-        }
-        return true;
-    }
-
     class RegisterAlwaysAnalyzer final {
         AstScope* const m_scopep;
 
@@ -606,30 +562,12 @@ class FsmDetectVisitor final : public VNVisitor {
         for (AstNode* nodep = stmtsp; nodep; nodep = nodep->nextp()) {
             AstCase* const casep = VN_CAST(nodep, Case);
             if (!casep) continue;
-            AstVarRef* const selp = VN_CAST(casep->exprp(), VarRef);
-            if (!selp) continue;
-
-            bool shouldWarn = false;
-            for (const auto& it : m_registerCandidates) {
-                const FsmRegisterCandidate& reg = it.second;
-                if (selp->varScopep() == reg.nextVscp()) {
-                    if (!hasCanonicalNextStateDefaultBeforeCase(stmtsp, casep, reg.stateVscp(),
-                                                                reg.nextVscp())) {
-                        continue;
-                    }
-                } else if (selp->varScopep() != reg.stateVscp()) {
-                    continue;
-                }
-                if (!caseSupportedTransitionNode(casep, reg.nextVscp(), reg.inclCond())) continue;
-                shouldWarn = true;
+            if (analyzer.shouldWarnUnsupported(stmtsp, casep)) {
                 casep->v3warn(COVERIGN, "Ignoring unsupported: FSM coverage on non-clocked always "
                                         "blocks requires a combinational sensitivity list or "
                                         "always_comb");
                 warned = true;
-                break;
             }
-            UASSERT_OBJ(shouldWarn == analyzer.shouldWarnUnsupported(stmtsp, casep), casep,
-                        "shadow combo analyzer disagreed on unsupported plain-always warning");
             if (warned) break;
         }
     }
@@ -1044,21 +982,8 @@ class FsmDetectVisitor final : public VNVisitor {
     void processOneBlockAlways(AstAlways* alwaysp) {
         const RegisterAlwaysAnalyzer analyzer{m_scopep};
         if (!alwaysp->sentreep() || !alwaysp->sentreep()->hasEdge()) return;
-        std::vector<std::pair<AstCase*, AstNodeExpr*>> candidates;
-        AstNode* stmtsp = alwaysp->stmtsp();
-        AstIf* const firstIfp = VN_CAST(stmtsp, If);
-        if (firstIfp) {
-            if (AstCase* const casep = VN_CAST(firstIfp->elsesp(), Case)) {
-                candidates.emplace_back(
-                    casep, isSimpleResetCond(firstIfp->condp()) ? firstIfp->condp() : nullptr);
-            }
-        }
-        for (AstNode* nodep = stmtsp; nodep; nodep = nodep->nextp()) {
-            if (AstCase* const casep = VN_CAST(nodep, Case))
-                candidates.emplace_back(casep, nullptr);
-        }
-        UASSERT_OBJ(sameCaseCandidateList(candidates, analyzer.oneBlockCandidates(alwaysp)), alwaysp,
-                    "shadow register analyzer disagreed on one-block candidate discovery");
+        const std::vector<std::pair<AstCase*, AstNodeExpr*>> candidates
+            = analyzer.oneBlockCandidates(alwaysp);
         if (candidates.empty()) return;
 
         FsmCaseCandidate firstCand;
@@ -1070,40 +995,8 @@ class FsmDetectVisitor final : public VNVisitor {
                 firstCand.warnNodep = cand.first;
                 firstCand.stateVscp = vscp;
                 FsmRegisterCandidate reg;
-                reg.scopep(m_scopep);
-                reg.alwaysp(alwaysp);
-                reg.stateVscp(vscp);
-                reg.nextVscp(vscp);
-                reg.senses() = describeSenTree(alwaysp->sentreep());
-                reg.resetCond() = describeResetCond(cand.second);
-                reg.hasResetCond(reg.resetCond().varScopep != nullptr);
-                reg.resetInclude(vscp->varp()->attrFsmResetArc());
-                reg.inclCond(vscp->varp()->attrFsmArcInclCond());
-                if (firstIfp && reg.hasResetCond()) {
-                    AstVarScope* resetStateVscp = nullptr;
-                    const ResetAssignStatus resetStatus = collectConstStateAssigns(
-                        firstIfp->thensp(), resetStateVscp, reg.resetArcs());
-                    if (resetStatus == ResetAssignStatus::NONE || resetStateVscp != vscp) {
-                        reg.resetArcs().clear();
-                        int resetValue = 0;
-                        AstNode* const thenNodep = singleMeaningfulBranch(firstIfp->thensp());
-                        UASSERT_OBJ(thenNodep, firstIfp,
-                                    "one-block reset fallback requires a non-empty reset branch");
-                        if (directConstStateAssignNode(thenNodep, resetStateVscp, resetValue)
-                            && resetStateVscp == vscp) {
-                            reg.resetArcs().emplace_back(resetValue, firstIfp->thensp());
-                        }
-                    } else if (resetStatus == ResetAssignStatus::MULTI_SAME_STATE) {
-                        reg.resetArcs().clear();
-                    }
-                }
-                FsmRegisterCandidate shadowReg;
-                UASSERT_OBJ(analyzer.buildOneBlockCandidate(alwaysp, cand.first, cand.second,
-                                                            shadowReg),
-                            cand.first,
-                            "shadow register analyzer rejected an accepted one-block candidate");
-                UASSERT_OBJ(sameRegisterCandidate(reg, shadowReg), cand.first,
-                            "shadow register analyzer disagreed on one-block candidate contents");
+                if (!analyzer.buildOneBlockCandidate(alwaysp, cand.first, cand.second, reg))
+                    continue;
                 processCase(cand.first, vscp, reg);
             } else if (vscp != firstCand.stateVscp) {
                 cand.first->v3warn(FSMMULTI,
@@ -1139,31 +1032,9 @@ class FsmDetectVisitor final : public VNVisitor {
         for (AstNode* nodep = stmtsp; nodep; nodep = nodep->nextp()) {
             AstCase* const casep = VN_CAST(nodep, Case);
             if (!casep) continue;
-            AstVarRef* const selp = VN_CAST(casep->exprp(), VarRef);
-            if (!selp) continue;
-
-            const FsmRegisterCandidate* matchedp = nullptr;
-            AstNode* matchedWarnNodep = nullptr;
-            for (const auto& it : m_registerCandidates) {
-                const FsmRegisterCandidate& reg = it.second;
-                if (selp->varScopep() == reg.nextVscp()) {
-                    if (!hasCanonicalNextStateDefaultBeforeCase(stmtsp, casep, reg.stateVscp(),
-                                                                reg.nextVscp())) {
-                        continue;
-                    }
-                } else if (selp->varScopep() != reg.stateVscp()) {
-                    continue;
-                }
-                AstNode* const warnNodep
-                    = caseSupportedTransitionNode(casep, reg.nextVscp(), reg.inclCond());
-                if (!warnNodep) continue;
-                matchedp = &reg;
-                matchedWarnNodep = warnNodep;
-            }
-            const ComboAlwaysAnalyzer::ComboMatch shadowMatch = analyzer.matchCase(stmtsp, casep);
-            UASSERT_OBJ(matchedp == shadowMatch.matchedp && matchedWarnNodep == shadowMatch.warnNodep,
-                        casep,
-                        "shadow combo analyzer disagreed on combo candidate matching");
+            const ComboAlwaysAnalyzer::ComboMatch match = analyzer.matchCase(stmtsp, casep);
+            const FsmRegisterCandidate* const matchedp = match.matchedp;
+            AstNode* const matchedWarnNodep = match.warnNodep;
             if (!matchedp) continue;
             if (!firstCand.stateVscp) {
                 const auto insertPair = m_comboPaired.emplace(
@@ -1209,16 +1080,9 @@ class FsmDetectVisitor final : public VNVisitor {
     // scan.
     void visit(AstAlways* nodep) override {
         processOneBlockAlways(nodep);
-        FsmRegisterCandidate reg;
         const RegisterAlwaysAnalyzer analyzer{m_scopep};
-        FsmRegisterCandidate shadowReg;
-        const bool shadowMatched = analyzer.matchRegisterCandidate(nodep, shadowReg);
-        const bool matched = matchRegisterAlways(nodep, m_scopep, reg);
-        UASSERT_OBJ(matched == shadowMatched, nodep,
-                    "shadow register analyzer disagreed on register-candidate matching");
-        if (matched) {
-            UASSERT_OBJ(sameRegisterCandidate(reg, shadowReg), nodep,
-                        "shadow register analyzer disagreed on register-candidate contents");
+        FsmRegisterCandidate reg;
+        if (analyzer.matchRegisterCandidate(nodep, reg)) {
             m_registerCandidates.emplace(reg.stateVscp(), reg);
         }
         if (nodep->keyword() == VAlwaysKwd::ALWAYS_COMB) {
