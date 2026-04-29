@@ -50,18 +50,6 @@ Reset Semantics
   - nearby reset-policy warnings stay attached to supported FSM detection
     rather than silent mis-modeling
 
-- ``t_cover_fsm_reset_then``: reset branch with non-constant assignment is
-  ignored for reset arcs.
-
-  - the FSM stays legal, but reset-arc extraction must not invent a constant
-    reset state
-
-- ``t_cover_fsm_reset_commit_mismatch``: reset branch writes a different
-  register than the commit path.
-
-  - two-process reset extraction must reject when reset and commit do not
-    target the same state register
-
 Non-Clocked ``always`` Warning Scan
 -----------------------------------
 
@@ -105,22 +93,8 @@ three different observable outcomes:
 
 So this category is organized by behavior first, not forced into a single file.
 
-Normalized-If and ``case(state_d)`` Reject Shapes
--------------------------------------------------
-
-- ``t_cover_fsm_normalized_if_multi``: grouped negative shapes that should not
-  be extracted as FSM arcs.
-
-  - one-armed ``if``
-  - non-constant then branch
-  - non-constant else branch
-  - mismatched branch temporaries
-  - mixed state/temp branch writes
-  - same-temp branches with no final commit
-  - follow-up assignment that is not ``state_d = temp``
-  - follow-up assignment from the wrong temp
-  - follow-up assignment to the wrong lhs
-  - ``case(state_d)`` with a wrong pre-case RHS
+Normalized-If and ``case(state_d)`` Canonical Rules
+---------------------------------------------------
 
 - ``t_cover_fsm_case_next_ok_multi``: grouped accepted canonical
   ``case(state_d)`` forms.
@@ -130,18 +104,18 @@ Normalized-If and ``case(state_d)`` Reject Shapes
   - accepted canonical ``case(state_d)`` with an unrelated pre-case plain
     ``VarRef`` assignment
 
-This category is intentionally split into:
+This category is intentionally split by acceptance policy:
 
-- one grouped reject file
-- one grouped accepted canonical ``case(state_d)`` file
-
-That keeps the output styles coherent while still matching the behavioral theme.
+- accepted canonical ``case(state_d)`` forms remain grouped in
+  ``t_cover_fsm_case_next_ok_multi``
+- rejected normalized-``if`` shapes and wrong-RHS ``case(state_d)`` shapes are
+  folded into ``t_cover_fsm_transition_shapes_multi``
 
 Transition-Shape Rejects
 ------------------------
 
 - ``t_cover_fsm_transition_shapes_multi``: grouped unsupported
-  transition-shape patterns that must not emit FSM points.
+  FSM extraction patterns that must not emit FSM points.
 
   - direct case-item assignment with plain ``VarRef`` RHS
   - direct ternary case item with non-constant then arm
@@ -150,6 +124,10 @@ Transition-Shape Rejects
   - one-block conditional commit whose non-reset arm is not a plain source
     ``VarRef``
   - combinational case selector that is not a plain state ``VarRef``
+  - normalized-``if`` tail mismatches and missing follow-up commits
+  - ``case(state_d)`` with a wrong pre-case RHS
+  - reset/non-reset commit mismatch in two-process extraction
+  - forced-FSM width shapes that must remain uninferred
 
 Validation and Policy
 ---------------------
@@ -164,14 +142,6 @@ Validation and Policy
   - accepted default-item arc when ``fsm_arc_include_cond`` is enabled
   - accepted forced-FSM extraction for non-enum state variables
 
-- ``t_cover_fsm_forced_wide``: forced FSM is rejected when the state width is
-  too wide.
-
-  - ``/*verilator forceable*/`` or forced-FSM style hints do not override the
-    supported width limit
-  - malformed or unsupported enum-backed state declarations must not be
-    inferred as legal FSMs
-
 - ``t_cover_fsm_enumwide_bad``: enum-backed state too wide for supported FSM
   coverage.
 
@@ -182,7 +152,7 @@ This family is intentionally still split because it currently mixes:
 
 - accepted simulator-style policy checks
 - warning-oriented policy checks
-- silent-ignore width-limit checks
+- warning-oriented width-limit checks
 
 So only the accepted simulator-style subset is grouped today.
 
