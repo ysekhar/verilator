@@ -107,8 +107,8 @@ public:
 };
 
 class FsmComboAlways final {
-    AstScope* m_scopep = nullptr;  // Owning scope for the combinational process.
-    AstAlways* m_alwaysp = nullptr;  // Candidate transition process.
+    AstScope* const m_scopep = nullptr;  // Owning scope for the combinational process.
+    AstAlways* const m_alwaysp = nullptr;  // Candidate transition process.
 
 public:
     FsmComboAlways() = default;
@@ -410,13 +410,6 @@ class FsmDetectVisitor final : public VNVisitor {
         return branchp;
     }
 
-    // Some user code wraps the entire always body in a single begin/end; keep
-    // top-level scans focused on the real statement list inside that wrapper.
-    static AstNode* unwrapBeginStmtList(AstNode* stmtp) {
-        stmtp = skipLeadingIgnorableStmt(stmtp);
-        return stmtp;
-    }
-
     // By fsm-detect time, non-clocked always @* blocks are already admitted through
     // a missing sentree. This helper therefore only needs to recognize
     // explicit changed-sensitivity lists such as always @(a or b); clocked and
@@ -432,7 +425,7 @@ class FsmDetectVisitor final : public VNVisitor {
     }
 
     void warnUnsupportedComboAlways(const FsmComboAlways& combo) {
-        AstNode* const stmtsp = unwrapBeginStmtList(combo.alwaysp()->stmtsp());
+        AstNode* const stmtsp = skipLeadingIgnorableStmt(combo.alwaysp()->stmtsp());
         bool warned = false;
         for (AstNode* nodep = stmtsp; nodep; nodep = nodep->nextp()) {
             AstCase* const casep = VN_CAST(nodep, Case);
@@ -529,7 +522,7 @@ class FsmDetectVisitor final : public VNVisitor {
     // reset transitions for an odd but legal coding style.
     static ResetAssignStatus collectConstStateAssigns(AstNode* stmtp, AstVarScope*& stateVscp,
                                                       std::vector<FsmResetArcDesc>& resetArcs) {
-        AstNode* nodep = unwrapBeginStmtList(stmtp);
+        AstNode* nodep = skipLeadingIgnorableStmt(stmtp);
         UASSERT_OBJ(nodep, stmtp, "Empty reset branch unexpectedly survived to FSM detection");
         for (;; nodep = nodep->nextp()) {
             AstVarScope* assignStateVscp = nullptr;
@@ -552,7 +545,7 @@ class FsmDetectVisitor final : public VNVisitor {
     static bool hasCanonicalNextStateDefaultBeforeCase(AstNode* stmtsp, AstCase* casep,
                                                        AstVarScope* stateVscp,
                                                        AstVarScope* nextVscp) {
-        AstNode* const bodyp = unwrapBeginStmtList(stmtsp);
+        AstNode* const bodyp = skipLeadingIgnorableStmt(stmtsp);
         bool sawCanonicalDefault = false;
         for (AstNode* nodep = bodyp;; nodep = nodep->nextp()) {
             UASSERT_OBJ(nodep, casep,
@@ -674,7 +667,7 @@ class FsmDetectVisitor final : public VNVisitor {
                                     FsmRegisterCandidate& cand) {
         if (!alwaysp->sentreep() || !alwaysp->sentreep()->hasEdge()) return false;
 
-        AstNode* const stmtsp = unwrapBeginStmtList(alwaysp->stmtsp());
+        AstNode* const stmtsp = skipLeadingIgnorableStmt(alwaysp->stmtsp());
         AstNode* const nodep = singleMeaningfulStmt(stmtsp);
         if (!nodep) return false;
 
@@ -942,7 +935,7 @@ class FsmDetectVisitor final : public VNVisitor {
     }
 
     void processComboAlways(const FsmComboAlways& combo) {
-        AstNode* const stmtsp = unwrapBeginStmtList(combo.alwaysp()->stmtsp());
+        AstNode* const stmtsp = skipLeadingIgnorableStmt(combo.alwaysp()->stmtsp());
         FsmCaseCandidate firstCand;
         for (AstNode* nodep = stmtsp; nodep; nodep = nodep->nextp()) {
             AstCase* const casep = VN_CAST(nodep, Case);
