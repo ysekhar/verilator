@@ -299,7 +299,7 @@ struct DetectedFsm final {
 using DetectedFsmMap = std::map<const AstVarScope*, DetectedFsm>;
 
 struct FsmCaseCandidate final {
-    AstCase* casep = nullptr;  // Source case statement accepted as the first supported candidate.
+    AstNode* warnNodep = nullptr;  // Transition node that made the candidate supported.
     AstVarScope* stateVscp = nullptr;  // FSM state variable associated with that candidate.
 };
 
@@ -339,12 +339,12 @@ class FsmDetectVisitor final : public VNVisitor {
         return dtypep->skipRefToEnump();
     }
 
-    static string candidateConflictContext(AstCase* laterCasep,
+    static string candidateConflictContext(AstNode* laterNodep,
                                            const FsmCaseCandidate& firstCand) {
-        return '\n' + laterCasep->warnContextPrimary() + firstCand.casep->warnOther()
+        return '\n' + laterNodep->warnContextPrimary() + firstCand.warnNodep->warnOther()
                + "... Location of first supported candidate for "
                + firstCand.stateVscp->prettyNameQ() + '\n'
-               + firstCand.casep->warnContextSecondary();
+               + firstCand.warnNodep->warnContextSecondary();
     }
 
     // Reset arcs are only modeled for the simple signal form that survives to
@@ -443,7 +443,7 @@ class FsmDetectVisitor final : public VNVisitor {
                 } else if (selp->varScopep() != reg.stateVscp()) {
                     continue;
                 }
-                if (!caseAssignsState(casep, reg.nextVscp(), reg.inclCond())) continue;
+                if (!caseSupportedTransitionNode(casep, reg.nextVscp(), reg.inclCond())) continue;
                 casep->v3warn(COVERIGN, "Ignoring unsupported: FSM coverage on non-clocked always "
                                         "blocks requires a combinational sensitivity list or "
                                         "always_comb");
@@ -605,30 +605,37 @@ class FsmDetectVisitor final : public VNVisitor {
                && exprConstValue(condp->elsep(), elseValue);
     }
 
-    static bool caseItemHasSupportedArc(AstCaseItem* itemp, AstVarScope* stateVscp,
-                                        bool inclCond) {
+    static AstNode* caseItemSupportedArcNode(AstCaseItem* itemp, AstVarScope* stateVscp,
+                                             bool inclCond) {
         if (itemp->isDefault()) {
-            if (!inclCond) return false;
+            if (!inclCond) return nullptr;
         }
         AstNodeAssign* const assp = directStateAssign(itemp->stmtsp(), stateVscp);
         if (assp) {
             int toValue = 0;
-            if (exprConstValue(assp->rhsp(), toValue)) return true;
+            if (exprConstValue(assp->rhsp(), toValue)) return assp;
         }
         int thenValue = 0;
         int elseValue = 0;
-        return directStateCondConstAssign(itemp->stmtsp(), stateVscp, thenValue, elseValue)
-               || ifStateConstAssign(itemp->stmtsp(), stateVscp, thenValue, elseValue);
+        if (directStateCondConstAssign(itemp->stmtsp(), stateVscp, thenValue, elseValue)) {
+            return assp;
+        }
+        if (ifStateConstAssign(itemp->stmtsp(), stateVscp, thenValue, elseValue)) {
+            return singleMeaningfulBranch(itemp->stmtsp());
+        }
+        return nullptr;
     }
 
     // Combinational transition blocks are paired only through supported case
     // items that assign to the recorded next-state variable.
-    static bool caseAssignsState(AstCase* casep, AstVarScope* stateVscp, bool inclCond) {
+    static AstNode* caseSupportedTransitionNode(AstCase* casep, AstVarScope* stateVscp,
+                                                bool inclCond) {
         for (AstCaseItem* itemp = casep->itemsp(); itemp;
              itemp = VN_AS(itemp->nextp(), CaseItem)) {
-            if (caseItemHasSupportedArc(itemp, stateVscp, inclCond)) return true;
+            if (AstNode* const nodep = caseItemSupportedArcNode(itemp, stateVscp, inclCond))
+                return nodep;
         }
-        return false;
+        return nullptr;
     }
 
     // Prefer enum labels in reports; fall back to synthetic labels for forced
@@ -877,7 +884,7 @@ class FsmDetectVisitor final : public VNVisitor {
             AstVarScope* const vscp = selp ? selp->varScopep() : nullptr;
             if (!vscp) continue;
             if (!firstCand.stateVscp) {
-                firstCand.casep = cand.first;
+                firstCand.warnNodep = cand.first;
                 firstCand.stateVscp = vscp;
                 FsmRegisterCandidate reg;
                 reg.scopep(m_scopep);
@@ -927,11 +934,12 @@ class FsmDetectVisitor final : public VNVisitor {
     // Phase 1 two-process pairing scans combinational always blocks only after
     // all strict register candidates have been collected, so source order does
     // not matter.
-    static void warnComboSameAlways(AstCase* casep, const FsmCaseCandidate& firstCand) {
-        casep->v3warn(FSMMULTI, "FSM coverage: multiple supported transition candidates found in "
-                                "the same combinational always block. Only the first candidate "
-                                "will be instrumented."
-                                    << candidateConflictContext(casep, firstCand));
+    static void warnComboSameAlways(AstNode* warnNodep, const FsmCaseCandidate& firstCand) {
+        warnNodep->v3warn(FSMMULTI,
+                          "FSM coverage: multiple supported transition candidates found in "
+                          "the same combinational always block. Only the first candidate "
+                          "will be instrumented."
+                              << candidateConflictContext(warnNodep, firstCand));
     }
 
     void processComboAlways(const FsmComboAlways& combo) {
@@ -944,6 +952,7 @@ class FsmDetectVisitor final : public VNVisitor {
             if (!selp) continue;
 
             const FsmRegisterCandidate* matchedp = nullptr;
+            AstNode* matchedWarnNodep = nullptr;
             for (const auto& it : m_registerCandidates) {
                 const FsmRegisterCandidate& reg = it.second;
                 if (selp->varScopep() == reg.nextVscp()) {
@@ -954,34 +963,40 @@ class FsmDetectVisitor final : public VNVisitor {
                 } else if (selp->varScopep() != reg.stateVscp()) {
                     continue;
                 }
-                if (!caseAssignsState(casep, reg.nextVscp(), reg.inclCond())) continue;
+                AstNode* const warnNodep
+                    = caseSupportedTransitionNode(casep, reg.nextVscp(), reg.inclCond());
+                if (!warnNodep) continue;
                 matchedp = &reg;
+                matchedWarnNodep = warnNodep;
             }
             if (!matchedp) continue;
             if (!firstCand.stateVscp) {
                 const auto insertPair = m_comboPaired.emplace(
-                    matchedp->stateVscp(),
-                    FsmCaseCandidate{casep, const_cast<AstVarScope*>(matchedp->stateVscp())});
+                    matchedp->stateVscp(), FsmCaseCandidate{matchedWarnNodep,
+                                                            const_cast<AstVarScope*>(
+                                                                matchedp->stateVscp())});
                 if (!insertPair.second) {
-                    casep->v3warn(
+                    matchedWarnNodep->v3warn(
                         FSMMULTI,
                         "FSM coverage: multiple supported transition candidates found "
                         "for the same FSM in combinational always blocks. Only the "
                         "first candidate will be instrumented."
-                            << candidateConflictContext(casep, insertPair.first->second));
+                            << candidateConflictContext(matchedWarnNodep, insertPair.first->second));
                     continue;
                 }
-                firstCand.casep = casep;
+                firstCand.warnNodep = matchedWarnNodep;
                 firstCand.stateVscp = const_cast<AstVarScope*>(matchedp->stateVscp());
                 processCase(casep, matchedp->nextVscp(), *matchedp);
             } else if (matchedp->stateVscp() != firstCand.stateVscp) {
-                warnComboSameAlways(casep, firstCand);
+                warnComboSameAlways(matchedWarnNodep, firstCand);
             } else {
-                casep->v3warn(COVERIGN,
-                              "Ignoring unsupported: FSM coverage on multiple supported case "
-                              "statements found in the same combinational always block. Only "
-                              "the first candidate will be instrumented."
-                                  << candidateConflictContext(casep, firstCand));
+                matchedWarnNodep->v3warn(COVERIGN,
+                                         "Ignoring unsupported: FSM coverage on multiple "
+                                         "supported case statements found in the same "
+                                         "combinational always block. Only the first "
+                                         "candidate will be instrumented."
+                                             << candidateConflictContext(matchedWarnNodep,
+                                                                         firstCand));
             }
         }
     }
