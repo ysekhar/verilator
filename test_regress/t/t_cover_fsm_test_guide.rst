@@ -62,11 +62,6 @@ Reset Semantics
   - two-process reset extraction must reject when reset and commit do not
     target the same state register
 
-- ``t_cover_fsm_reset_unknown_enum_bad``: reset arc is filtered when it
-  assigns a constant outside the declared enum.
-
-  - enum labels define the legal reset destinations for modeled reset arcs
-
 Non-Clocked ``always`` Warning Scan
 -----------------------------------
 
@@ -159,8 +154,9 @@ Transition-Shape Rejects
 Validation and Policy
 ---------------------
 
-- ``t_cover_fsm_if_unknown_enum_multi_bad``: grouped direct and
-  conditional-transition warnings for unknown enum constants.
+- ``t_cover_fsm_if_unknown_enum_multi_bad``: grouped direct,
+  conditional-transition, and reset-transition warnings for unknown enum
+  constants.
 
 - ``t_cover_fsm_policy_accept_multi``: grouped accepted policy-style forms.
 
