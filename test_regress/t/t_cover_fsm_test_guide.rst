@@ -66,17 +66,12 @@ Non-Clocked ``always`` Warning Scan
   - non-``VarRef`` selector
   - unrelated selector
 
-- ``t_cover_fsm_plain_always_case_next_noncano``: ``case(state_d)``
-  plain-``always`` shape without the canonical pre-case default.
+- ``t_cover_fsm_plain_always_zerohit_multi``: grouped plain-``always``
+  near-miss shapes that still leave zero-hit FSM records behind.
 
-  - warning scan sees the nearby structure but must reject the non-canonical
-    next-state default pattern
-
-- ``t_cover_fsm_plain_always_noassign``: selector matches, but case items
-  never assign the next-state variable.
-
-  - warning scan must ignore a near miss that never actually drives the
-    candidate next-state register
+  - ``case(state_d)`` without the canonical pre-case default
+  - selector matches, but case items never assign the candidate next-state
+    register
 
 - ``t_cover_fsm_nextstate_overwrite_warn``: next-state default is overwritten
   before the case and should warn.
