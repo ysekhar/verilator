@@ -4,6 +4,9 @@
 // SPDX-FileCopyrightText: 2026 Wilson Snyder
 // SPDX-License-Identifier: CC0-1.0
 
+// Group the same unsupported warning family across direct, conditional, and
+// reset-driven enum assignments that use constants outside the declared enum.
+
 module unknown_then (
     input logic clk
 );

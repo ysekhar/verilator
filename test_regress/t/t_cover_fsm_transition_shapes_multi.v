@@ -4,6 +4,9 @@
 // SPDX-FileCopyrightText: 2026 Wilson Snyder
 // SPDX-License-Identifier: CC0-1.0
 
+// Group unsupported extraction shapes that must compile and run cleanly while
+// emitting no FSM coverage points at all.
+
 module fsm_caseitem_varrhs_bad (
     input logic clk
 );
