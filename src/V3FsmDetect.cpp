@@ -377,11 +377,8 @@ class FsmDetectVisitor final : public VNVisitor {
             return FsmDetectVisitor::matchRegisterAlways(alwaysp, m_scopep, cand);
         }
 
-        bool buildOneBlockCandidate(AstAlways* alwaysp, AstCase* casep, AstNodeExpr* resetCondp,
-                                    FsmRegisterCandidate& reg) const {
-            AstVarRef* const selp = VN_CAST(casep->exprp(), VarRef);
-            AstVarScope* const vscp = selp ? selp->varScopep() : nullptr;
-            if (!vscp) return false;
+        void buildOneBlockCandidate(AstAlways* alwaysp, AstVarScope* vscp,
+                                    AstNodeExpr* resetCondp, FsmRegisterCandidate& reg) const {
             reg.scopep(m_scopep);
             reg.alwaysp(alwaysp);
             reg.stateVscp(vscp);
@@ -412,7 +409,6 @@ class FsmDetectVisitor final : public VNVisitor {
                     reg.resetArcs().clear();
                 }
             }
-            return true;
         }
     };
 
@@ -995,8 +991,7 @@ class FsmDetectVisitor final : public VNVisitor {
                 firstCand.warnNodep = cand.first;
                 firstCand.stateVscp = vscp;
                 FsmRegisterCandidate reg;
-                if (!analyzer.buildOneBlockCandidate(alwaysp, cand.first, cand.second, reg))
-                    continue;
+                analyzer.buildOneBlockCandidate(alwaysp, vscp, cand.second, reg);
                 processCase(cand.first, vscp, reg);
             } else if (vscp != firstCand.stateVscp) {
                 cand.first->v3warn(FSMMULTI,

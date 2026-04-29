@@ -512,6 +512,7 @@ module fsm_normalized_if_follow_nonvar_bad (
         end else begin
           tmp_a = S2;
         end
+        // Final follow-up is not a plain var-to-var state assignment.
         aux = (tmp_a == S1);
       end
       default: state_d = S0;
@@ -551,7 +552,8 @@ module fsm_normalized_if_follow_wrongfrom_bad (
         end else begin
           tmp_a = S2;
         end
-        other_d = tmp_a;
+        // Final follow-up reads from the wrong source temp.
+        state_d = other_d;
       end
       default: state_d = S0;
     endcase
@@ -590,6 +592,7 @@ module fsm_normalized_if_follow_wronglhs_bad (
         end else begin
           tmp_a = S2;
         end
+        // Final follow-up writes the wrong lhs instead of state_d.
         other_d = tmp_a;
       end
       default: state_d = S0;
