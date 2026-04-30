@@ -509,8 +509,10 @@ module fsm_normalized_if_follow_nonvar_bad (
       S0: begin
         if (sel) begin
           tmp_a = S1;
+          aux = 1'b1;
         end else begin
           tmp_a = S2;
+          aux = 1'b0;
         end
         // Final follow-up is not a plain var-to-var state assignment.
         aux = (tmp_a == S1);

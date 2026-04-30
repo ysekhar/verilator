@@ -456,12 +456,12 @@ class FsmDetectVisitor final : public VNVisitor {
             if (!selp) return false;
             for (const auto& it : m_registerCandidates) {
                 const FsmRegisterCandidate& reg = it.second;
-                if (selp->varScopep() == reg.nextVscp()) {
-                    if (!FsmDetectVisitor::hasCanonicalNextStateDefaultBeforeCase(
-                            stmtsp, casep, reg.stateVscp(), reg.nextVscp())) {
-                        continue;
-                    }
-                } else if (selp->varScopep() != reg.stateVscp()) {
+                const bool matchesNext = selp->varScopep() == reg.nextVscp();
+                const bool matchesState = selp->varScopep() == reg.stateVscp();
+                if (!matchesNext && !matchesState) continue;
+                if (matchesNext
+                    && !FsmDetectVisitor::hasCanonicalNextStateDefaultBeforeCase(
+                        stmtsp, casep, reg.stateVscp(), reg.nextVscp())) {
                     continue;
                 }
                 if (!FsmDetectVisitor::caseSupportedTransitionNode(casep, reg.nextVscp(),
