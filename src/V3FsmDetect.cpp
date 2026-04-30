@@ -1049,17 +1049,19 @@ class FsmDetectVisitor final : public VNVisitor {
                 firstCand.warnNodep = matchedWarnNodep;
                 firstCand.stateVscp = const_cast<AstVarScope*>(matchedp->stateVscp());
                 processCase(casep, matchedp->nextVscp(), *matchedp);
-            } else if (matchedp->stateVscp() != firstCand.stateVscp) {
-                warnComboSameAlways(matchedWarnNodep, firstCand);
-            } else {
-                matchedWarnNodep->v3warn(COVERIGN,
-                                         "Ignoring unsupported: FSM coverage on multiple "
-                                         "supported case statements found in the same "
-                                         "combinational always block. Only the first "
-                                         "candidate will be instrumented."
-                                             << candidateConflictContext(matchedWarnNodep,
-                                                                         firstCand));
+                continue;
             }
+            if (matchedp->stateVscp() != firstCand.stateVscp) {
+                warnComboSameAlways(matchedWarnNodep, firstCand);
+                continue;
+            }
+            matchedWarnNodep->v3warn(COVERIGN,
+                                     "Ignoring unsupported: FSM coverage on multiple "
+                                     "supported case statements found in the same "
+                                     "combinational always block. Only the first "
+                                     "candidate will be instrumented."
+                                         << candidateConflictContext(matchedWarnNodep,
+                                                                     firstCand));
         }
     }
 
