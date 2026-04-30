@@ -452,26 +452,26 @@ class FsmDetectVisitor final : public VNVisitor {
         }
 
         bool shouldWarnUnsupported(AstNode* stmtsp, AstCase* casep) const {
-          const AstVarRef* const selp = VN_CAST(casep->exprp(), VarRef);
-          if (!selp) return false;
+            const AstVarRef* const selp = VN_CAST(casep->exprp(), VarRef);
+            if (!selp) return false;
 
-          const auto isRecognizedFsm = [&](const auto& entry) {
-            const FsmRegisterCandidate& reg = entry.second;
-            const bool matchesNext  = selp->varScopep() == reg.nextVscp();
-            const bool matchesState = selp->varScopep() == reg.stateVscp();
+            const auto isRecognizedFsm = [&](const auto& entry) -> bool {
+                const FsmRegisterCandidate& reg = entry.second;
+                const bool matchesNext = selp->varScopep() == reg.nextVscp();
+                const bool matchesState = selp->varScopep() == reg.stateVscp();
 
-            if (!matchesNext && !matchesState) return false;
-            if (matchesNext
-                && !FsmDetectVisitor::hasCanonicalNextStateDefaultBeforeCase(
-                  stmtsp, casep, reg.stateVscp(), reg.nextVscp())) {
-              return false;
-            }
-            return FsmDetectVisitor::caseSupportedTransitionNode(
-                casep, reg.nextVscp(), reg.inclCond());
-          };
+                if (!matchesNext && !matchesState) return false;
+                if (matchesNext
+                    && !FsmDetectVisitor::hasCanonicalNextStateDefaultBeforeCase(
+                        stmtsp, casep, reg.stateVscp(), reg.nextVscp())) {
+                    return false;
+                }
+                return FsmDetectVisitor::caseSupportedTransitionNode(casep, reg.nextVscp(),
+                                                                     reg.inclCond());
+            };
 
-          return std::any_of(m_registerCandidates.begin(),
-              m_registerCandidates.end(), isRecognizedFsm);
+            return std::any_of(m_registerCandidates.begin(), m_registerCandidates.end(),
+                               isRecognizedFsm);
         }
     };
 
