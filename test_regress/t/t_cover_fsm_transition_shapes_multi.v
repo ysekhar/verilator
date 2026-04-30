@@ -530,6 +530,7 @@ module fsm_normalized_if_follow_wrongfrom_bad (
 );
   typedef enum logic [1:0] { S0 = 2'd0, S1 = 2'd1, S2 = 2'd2 } state_t;
   logic sel;
+  logic aux;
   integer cyc;
   state_t state_q /*verilator fsm_state*/;
   state_t state_d;
@@ -551,8 +552,10 @@ module fsm_normalized_if_follow_wrongfrom_bad (
       S0: begin
         if (sel) begin
           tmp_a = S1;
+          aux = 1'b1;
         end else begin
           tmp_a = S2;
+          aux = 1'b0;
         end
         // Final follow-up reads from the wrong source temp.
         state_d = other_d;
