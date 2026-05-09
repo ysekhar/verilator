@@ -40,6 +40,8 @@ VL_DEFINE_DEBUG_FUNCTIONS;
 
 namespace {
 
+// FSM graph state ids intentionally stay scalar here; arbitrary-width Verilog
+// encodings need a wider graph representation and are rejected before lowering.
 using FsmStateValue = uint32_t;
 
 // Captures one sensitivity-list entry so the lowering phase can later rebuild
@@ -305,12 +307,16 @@ struct FsmCaseCandidate final {
     AstVarScope* stateVscp = nullptr;  // FSM state variable associated with that candidate.
 };
 
+// Keep the source expression with the encoded value so inferred literal FSMs can
+// reuse the same state-space policy as case-item dispatch.
 struct FsmStateComparison final {
     AstVarScope* stateVscp = nullptr;  // Compared state variable.
     AstNodeExpr* valuep = nullptr;  // Compared constant value expression.
     FsmStateValue value = 0;  // Encoded compared state value.
 };
 
+// A branch is usable only after its predicate has exactly one state comparison;
+// any extra predicate term is treated as an arc guard.
 struct FsmIfBranch final {
     AstIf* ifp = nullptr;  // Source if/else-if node.
     AstNode* stmtsp = nullptr;  // Branch body.
@@ -319,6 +325,8 @@ struct FsmIfBranch final {
     bool hasTopGuard = false;  // Branch condition had extra guard terms.
 };
 
+// If-chains are kept separate from cases until graph construction so the
+// existing case path remains the preferred candidate when both forms appear.
 struct FsmIfChainCandidate final {
     AstIf* ifp = nullptr;  // Top-level if-chain node.
     AstVarScope* compareVscp = nullptr;  // Variable used by every state comparison.
@@ -326,6 +334,8 @@ struct FsmIfChainCandidate final {
     AstNode* defaultStmtsp = nullptr;  // Optional final else body.
 };
 
+// Aliases are accepted only when they are equivalent to spelling the state
+// comparison inline; this avoids inferring FSM semantics from arbitrary logic.
 using FsmAliasMap = std::unordered_map<const AstVarScope*, FsmStateComparison>;
 
 struct StateConstLabel final {
@@ -366,10 +376,14 @@ class FsmDetectVisitor final : public VNVisitor {
     FsmState& m_state;
     AstScope* m_scopep = nullptr;
     std::unordered_map<const AstVarScope*, FsmRegisterCandidate> m_registerCandidates;
+    // Deferring one-block detection avoids making continuous alias support
+    // depend on whether the assign appears before or after the always block.
     std::vector<FsmComboAlways> m_oneBlockAlwayss;
     std::vector<FsmComboAlways> m_comboAlwayss;
     std::vector<FsmComboAlways> m_nonComboAlwayss;
     std::unordered_map<const AstVarScope*, FsmCaseCandidate> m_comboPaired;
+    // Continuous aliases are order-independent, while procedural aliases must
+    // remain source-order scoped to avoid using assignments not yet executed.
     FsmAliasMap m_stateAliases;
     std::unordered_set<const AstVarScope*> m_ambiguousStateAliases;
 
@@ -420,6 +434,8 @@ class FsmDetectVisitor final : public VNVisitor {
             std::vector<std::pair<AstIf*, AstNodeExpr*>> candidates;
             AstNode* const stmtsp = alwaysp->stmtsp();
             AstIf* const firstIfp = VN_CAST(stmtsp, If);
+            // Reset-else FSMs should behave like the existing case path: reset
+            // information is metadata, not part of steady-state dispatch.
             if (firstIfp) {
                 if (AstIf* const chainp
                     = VN_CAST(FsmDetectVisitor::singleMeaningfulBranch(firstIfp->elsesp()), If)) {
@@ -518,6 +534,8 @@ class FsmDetectVisitor final : public VNVisitor {
                  = m_registerCandidates.begin();
                  it != m_registerCandidates.end(); ++it) {
                 const FsmRegisterCandidate& reg = it->second;
+                // Comparing state_d is safe only with the canonical default;
+                // otherwise the chain may be dispatching on already-mutated data.
                 if (chain.compareVscp == reg.nextVscp()) {
                     if (!FsmDetectVisitor::hasCanonicalNextStateDefaultBeforeCase(
                             stmtsp, chain.ifp, reg.stateVscp(), reg.nextVscp())) {
@@ -888,6 +906,8 @@ class FsmDetectVisitor final : public VNVisitor {
         AstEq* const eqp = VN_CAST(exprp, Eq);
         if (!eqp) return false;
 
+        // Operand order is not semantically meaningful for state dispatch, so
+        // both normalized forms should classify identically.
         AstVarRef* vrefp = VN_CAST(eqp->lhsp(), VarRef);
         AstNodeExpr* valuep = eqp->rhsp();
         if (!vrefp) {
@@ -906,6 +926,8 @@ class FsmDetectVisitor final : public VNVisitor {
     static bool pureStateComparison(AstNodeExpr* exprp, const FsmAliasMap& aliases,
                                     FsmStateComparison& cmp) {
         if (pureStateComparisonNoAlias(exprp, cmp)) return true;
+        // Bare predicates are too broad for FSM inference unless a prior alias
+        // proves they are exactly a state comparison.
         if (AstVarRef* const vrefp = VN_CAST(exprp, VarRef)) {
             const FsmAliasMap::const_iterator it = aliases.find(vrefp->varScopep());
             if (it == aliases.end()) return false;
@@ -916,6 +938,8 @@ class FsmDetectVisitor final : public VNVisitor {
     }
 
     static bool unsupportedTopLevelGuard(AstNodeExpr* exprp) {
+        // These terms can combine multiple dispatch choices into one branch, so
+        // treating them as ordinary guards would over-infer the FSM shape.
         if (VN_IS(exprp, Or)) return true;
         if (VN_IS(exprp, RedAnd)) return true;
         if (VN_IS(exprp, RedOr)) return true;
@@ -928,6 +952,8 @@ class FsmDetectVisitor final : public VNVisitor {
         std::vector<AstNodeExpr*> terms;
         std::vector<AstNodeExpr*> pending;
         pending.push_back(exprp);
+        // Top-level conjunction is the only decomposition we can map cleanly to
+        // one source state plus optional transition guards.
         while (!pending.empty()) {
             AstNodeExpr* const nodep = pending.back();
             pending.pop_back();
@@ -963,6 +989,8 @@ class FsmDetectVisitor final : public VNVisitor {
             aliases.emplace(aliasVscp, cmp);
             return;
         }
+        // Conflicting alias definitions make the predicate ambiguous, and
+        // ambiguous aliases are worse than missing an optional FSM.
         if (it->second.stateVscp == cmp.stateVscp && it->second.value == cmp.value) return;
         aliases.erase(aliasVscp);
         ambiguous.insert(aliasVscp);
@@ -974,6 +1002,8 @@ class FsmDetectVisitor final : public VNVisitor {
         AstVarRef* const lhsp = VN_CAST(assp->lhsp(), VarRef);
         if (!lhsp) return;
         FsmStateComparison cmp;
+        // Guarded aliases blur dispatch and transition conditions, so require a
+        // pure comparison and let guards live at the use site.
         if (!pureStateComparisonNoAlias(assp->rhsp(), cmp)) return;
         addAlias(aliases, ambiguous, lhsp->varScopep(), cmp);
     }
@@ -981,6 +1011,8 @@ class FsmDetectVisitor final : public VNVisitor {
     FsmAliasMap localAliasesBefore(AstNode* stmtsp, AstNode* limitp) const {
         FsmAliasMap aliases = m_stateAliases;
         std::unordered_set<const AstVarScope*> ambiguous = m_ambiguousStateAliases;
+        // Procedural aliases cannot be applied before their assignment without
+        // changing the meaning of the surrounding always block.
         for (AstNode* nodep = skipLeadingIgnorableStmt(stmtsp); nodep && nodep != limitp;
              nodep = nodep->nextp()) {
             if (AstNodeAssign* const assp = VN_CAST(nodep, NodeAssign)) {
@@ -996,6 +1028,8 @@ class FsmDetectVisitor final : public VNVisitor {
         chain.ifp = ifp;
         std::unordered_set<FsmStateValue> seenValues;
         AstIf* curp = ifp;
+        // Only the top-level spine represents dispatch; treating nested branch
+        // logic as additional source states would invent transitions.
         for (;;) {
             FsmStateComparison cmp;
             bool hasGuard = false;
@@ -1184,6 +1218,8 @@ class FsmDetectVisitor final : public VNVisitor {
 
         if (forced) {
             const int width = stateVarp->width();
+            // Forced non-enum FSMs have no declared state list, so enumeration
+            // must stay small enough for this scalar graph representation.
             if (width >= 31) return false;
             const unsigned stateCount = 1U << width;
             for (FsmStateValue value = 0; value < stateCount; ++value) {
@@ -1212,6 +1248,8 @@ class FsmDetectVisitor final : public VNVisitor {
                                             FsmStateSpace& stateSpace,
                                             const T_ValuepVisitor& visitValueps) {
         bool needsSourceValues = false;
+        // Cases and if-chains should share the same state-space policy; only
+        // the source of inferred literal values differs between the forms.
         if (!collectDeclaredStateSpace(warnNodep, stateVscp, stateSpace, needsSourceValues)) {
             return false;
         }
@@ -1245,6 +1283,8 @@ class FsmDetectVisitor final : public VNVisitor {
         return collectStateSpaceFromValues(
             chain.ifp, stateVscp, stateSpace, [&chain](const auto& visitValuep) {
                 for (const FsmIfBranch& branch : chain.branches) {
+                    // Reaching this point with an unresolvable source value
+                    // would mean the if-chain classifier and emitter disagree.
                     UASSERT_OBJ(visitValuep(branch.valuep), branch.valuep,
                                 "FSM if-chain source values should be prevalidated");
                 }
@@ -1316,6 +1356,8 @@ class FsmDetectVisitor final : public VNVisitor {
         const ConstValueStatus status = constValueStatus(assp->rhsp(), toValue);
         if (status == ConstValueStatus::OK) {
             if (!validateKnownStateValue(assp, stateSpace, toValue, "target")) return;
+            // Preserve the user's guard in coverage by marking this arc
+            // conditional even when the branch body is a direct assignment.
             graph.addArc(fromValue, toValue, false, forceCond, isDefault, assp->fileline());
             return;
         }
@@ -1335,6 +1377,8 @@ class FsmDetectVisitor final : public VNVisitor {
                                 AstVarScope* stateVscp, const FsmStateSpace& stateSpace) {
         for (size_t i = 0; i < chain.branches.size(); ++i) {
             const FsmIfBranch& branch = chain.branches[i];
+            // Invalid source labels mean the extracted graph would no longer
+            // match the resolved state space, so abandon the candidate.
             if (!validateKnownStateValue(branch.ifp, stateSpace, branch.fromValue, "source"))
                 return;
             emitStmtArcsFrom(graph, branch.stmtsp, stateVscp, stateSpace, branch.fromValue, false,
@@ -1396,6 +1440,8 @@ class FsmDetectVisitor final : public VNVisitor {
         FsmStateSpace stateSpace;
         if (!collectStateSpace(chain, stateVscp, stateSpace)) return;
         DetectedFsm& entry = m_state.fsms()[stateVscp];
+        // Case candidates keep ownership of existing graphs; reaching this path
+        // means the if-chain is the only supported dispatch for this FSM.
         UASSERT_OBJ(!entry.graphp, chain.ifp, "FSM if-chain graph should not already exist");
         entry.graphp.reset(new FsmGraph{});
         entry.graphp->scopep(reg.scopep());
@@ -1456,6 +1502,8 @@ class FsmDetectVisitor final : public VNVisitor {
 
         if (firstCand.stateVscp) return;
 
+        // Case dispatch is more explicit and pre-existing behavior depends on
+        // it winning when both shapes are present.
         const std::vector<std::pair<AstIf*, AstNodeExpr*>> ifCandidates
             = analyzer.oneBlockIfCandidates(alwaysp);
         for (const std::pair<AstIf*, AstNodeExpr*>& cand : ifCandidates) {
@@ -1540,6 +1588,8 @@ class FsmDetectVisitor final : public VNVisitor {
         }
         if (firstCand.stateVscp) return;
 
+        // Keep the same priority in paired combinational logic: if-chain
+        // support must not change which existing case FSM is instrumented.
         for (AstNode* nodep = stmtsp; nodep; nodep = nodep->nextp()) {
             AstIf* const ifp = VN_CAST(nodep, If);
             if (!ifp) continue;
@@ -1592,14 +1642,15 @@ class FsmDetectVisitor final : public VNVisitor {
         iterateChildren(nodep);
     }
 
-    // Collect one-block FSMs immediately, strict register candidates for later
-    // pairing, and combinational processes for the second-stage transition
-    // scan.
+    // Collect processes first, then analyze FSM candidates once all alias and
+    // register information is available.
     void visit(AstAlways* nodep) override {
         if (nodep->keyword() == VAlwaysKwd::CONT_ASSIGN) {
             iterateChildren(nodep);
             return;
         }
+        // This avoids making one-block if-chain detection sensitive to whether
+        // a continuous alias appears before or after the always block.
         m_oneBlockAlwayss.emplace_back(m_scopep, nodep);
         const RegisterAlwaysAnalyzer analyzer{m_scopep};
         FsmRegisterCandidate reg;
@@ -1618,6 +1669,8 @@ class FsmDetectVisitor final : public VNVisitor {
     }
 
     void visit(AstAssignW* nodep) override {
+        // Continuous aliases are unordered hardware connections, so source
+        // order should not affect whether an if-chain FSM is recognized.
         collectAliasFromAssign(nodep, m_stateAliases, m_ambiguousStateAliases);
         iterateChildren(nodep);
     }
