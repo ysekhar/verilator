@@ -241,7 +241,8 @@ module fsm_if_var_rhs_compare_bad (
 endmodule
 
 module fsm_if_var_target_bad (
-    input logic clk
+    input logic clk,
+    input logic [1:0] dyn
 );
   typedef enum logic [1:0] {
     S0 = 2'd0,
@@ -249,20 +250,16 @@ module fsm_if_var_target_bad (
     S2 = 2'd2
   } state_t;
 
-  state_t dyn;
   state_t state_q  /*verilator fsm_state*/;
   state_t state_d;
 
   always_comb begin
     state_d = state_q;
-    if (state_q == S0) state_d = dyn;
+    if (state_q == S0) state_d = state_t'(dyn);
     else if (state_q == S1) state_d = S2;
   end
 
-  always_ff @(posedge clk) begin
-    dyn <= S1;
-    state_q <= state_d;
-  end
+  always_ff @(posedge clk) state_q <= state_d;
 endmodule
 
 module fsm_if_alias_other_state_bad (
@@ -363,7 +360,7 @@ module t (
   fsm_if_no_assign_bad no_assign_u (.clk(clk));
   fsm_if_nonvar_compare_bad nonvar_compare_u (.clk(clk));
   fsm_if_var_rhs_compare_bad var_rhs_compare_u (.clk(clk));
-  fsm_if_var_target_bad var_target_u (.clk(clk));
+  fsm_if_var_target_bad var_target_u (.clk(clk), .dyn(dyn_case[1:0]));
   fsm_if_alias_other_state_bad alias_other_state_u (.clk(clk));
   fsm_if_bit_or_bad bit_or_u (.clk(clk), .start(start));
   fsm_if_reduction_bad reduction_u (.clk(clk));
