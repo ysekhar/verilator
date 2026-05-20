@@ -30,6 +30,7 @@
 #include "V3Ast.h"
 #include "V3Graph.h"
 
+#include <algorithm>
 #include <cctype>
 #include <map>
 #include <memory>
@@ -607,22 +608,20 @@ class FsmDetectVisitor final : public VNVisitor {
             const AstVarRef* const selp = VN_CAST(casep->exprp(), VarRef);
             if (!selp) return false;
 
-            for (const FsmRegisterCandidate& reg : m_registerCandidates) {
+            return std::any_of(m_registerCandidates.cbegin(), m_registerCandidates.cend(),
+                               [&](const FsmRegisterCandidate& reg) -> bool {
                 const bool matchesNext = selp->varScopep() == reg.nextVscp();
                 const bool matchesState = selp->varScopep() == reg.stateVscp();
 
-                if (!matchesNext && !matchesState) continue;
+                if (!matchesNext && !matchesState) return false;
                 if (matchesNext
                     && !FsmDetectVisitor::hasCanonicalNextStateDefaultBeforeCase(
                         stmtsp, casep, reg.stateVscp(), reg.nextVscp())) {
-                    continue;
+                    return false;
                 }
-                if (FsmDetectVisitor::caseSupportedTransitionNode(casep, reg.nextVscp(),
-                                                                  reg.inclCond())) {
-                    return true;
-                }
-            }
-            return false;
+                return FsmDetectVisitor::caseSupportedTransitionNode(casep, reg.nextVscp(),
+                                                                     reg.inclCond());
+            });
         }
     };
 
@@ -1745,13 +1744,12 @@ class FsmDetectVisitor final : public VNVisitor {
         const RegisterAlwaysAnalyzer analyzer{m_scopep};
         FsmRegisterCandidate reg;
         if (analyzer.matchRegisterCandidate(nodep, reg)) {
-            bool found = false;
-            for (const FsmRegisterCandidate& existing : m_registerCandidates) {
-                if (existing.stateVscp() == reg.stateVscp()) {
-                    found = true;
-                    break;
-                }
-            }
+            AstVarScope* const stateVscp = reg.stateVscp();
+            const bool found = std::any_of(
+                m_registerCandidates.cbegin(), m_registerCandidates.cend(),
+                [stateVscp](const FsmRegisterCandidate& existing) {
+                    return existing.stateVscp() == stateVscp;
+                });
             if (!found) {
                 m_registerCandidates.emplace_back(reg);
             }
