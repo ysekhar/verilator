@@ -408,15 +408,14 @@ class FsmState final {
     // the adjacent detect and lower phases, so the second phase never needs to
     // rediscover or serialize the extracted machine.
     std::vector<DetectedFsm> m_fsms;
-    std::map<string, size_t> m_fsmIndex;
+    std::map<const AstVarScope*, size_t> m_fsmIndex;
 
 public:
     DetectedFsm& fsmFor(AstVarScope* stateVscp) {
-        const string key = stateVscp->name();
-        const std::map<string, size_t>::const_iterator it = m_fsmIndex.find(key);
+        const std::map<const AstVarScope*, size_t>::const_iterator it = m_fsmIndex.find(stateVscp);
         if (it != m_fsmIndex.end()) return m_fsms.at(it->second);
         const size_t index = m_fsms.size();
-        m_fsmIndex.emplace(key, index);
+        m_fsmIndex.emplace(stateVscp, index);
         m_fsms.emplace_back();
         return m_fsms.back();
     }
