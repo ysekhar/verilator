@@ -87,9 +87,9 @@ run_bad("verilator_coverage --per-instance t/t_cover_hier.out",
         ["--per-instance", "t/t_cover_hier.out"])
 run_bad("verilator_coverage --per-instance --write coverage.dat t/t_cover_lib__1.out",
         ["--per-instance", "--write", test.obj_dir + "/bad_collapsed.dat", "t/t_cover_lib__1.out"])
-append_bad_log(
-    "verilator_coverage --per-instance --write coverage.dat missing.dat",
-    ["cd", test.obj_dir, "&&", vlcov, "--per-instance", "--write", "bad_missing.dat", "missing.dat"])
+append_bad_log("verilator_coverage --per-instance --write coverage.dat missing.dat", [
+    "cd", test.obj_dir, "&&", vlcov, "--per-instance", "--write", "bad_missing.dat", "missing.dat"
+])
 
 test.files_identical(log, test.golden_filename)
 
