@@ -38,9 +38,7 @@ with open(empty_cov, "w", encoding="utf-8") as fh:
 run_vlcov(vlcov,
           "verilator_coverage --report summary t/t_vlcov_data_e.dat",
           args=["--report", "summary", "t/t_vlcov_data_e.dat"])
-run_vlcov(vlcov,
-          "verilator_coverage t/t_cover_hier.out",
-          args=["t/t_cover_hier.out"])
+run_vlcov(vlcov, "verilator_coverage t/t_cover_hier.out", args=["t/t_cover_hier.out"])
 run_vlcov(vlcov,
           "verilator_coverage --report summary,hier t/t_cover_hier.out",
           args=["--report", "summary,hier", "t/t_cover_hier.out"])
